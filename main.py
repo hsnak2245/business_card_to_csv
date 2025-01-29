@@ -135,25 +135,81 @@ class BusinessCardProcessor:
         return denoised
 
     def extract_frames(self, video_path: str, interval: int = 30) -> List[np.ndarray]:
-        """Extract frames from video at specified intervals"""
+        """Extract frames from video at specified intervals with enhanced error handling"""
+        frames = []
         try:
-            frames = []
+            # Ensure video file exists
+            if not os.path.exists(video_path):
+                raise FileNotFoundError("Video file not found")
+
+            # Open video file
             vidcap = cv2.VideoCapture(video_path)
+            if not vidcap.isOpened():
+                raise ValueError("Unable to open video file")
+
+            # Get video properties
             total_frames = int(vidcap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if total_frames <= 0:
+                raise ValueError("Invalid video file or no frames detected")
+
+            fps = vidcap.get(cv2.CAP_PROP_FPS)
+            duration = total_frames / fps if fps > 0 else 0
+
+            # Log video information
+            logger.info(f"Video properties - Frames: {total_frames}, FPS: {fps}, Duration: {duration:.2f}s")
+
+            # Calculate frame extraction interval
+            frame_interval = max(1, int(fps * interval / 30))  # Adjust interval based on video FPS
             
             with st.progress(0) as progress_bar:
-                for frame_idx in range(0, total_frames, interval):
-                    vidcap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                frame_count = 0
+                while True:
+                    # Read frame
                     success, image = vidcap.read()
-                    if success:
-                        frames.append(image)
-                    progress_bar.progress(frame_idx / total_frames)
-            
+                    if not success:
+                        break
+
+                    # Process frame at intervals
+                    if frame_count % frame_interval == 0:
+                        # Verify frame integrity
+                        if image is not None and image.size > 0:
+                            # Check if frame is not too dark or too bright
+                            if np.mean(image) > 10 and np.mean(image) < 245:
+                                frames.append(image)
+                        
+                    # Update progress
+                    if frame_count % 10 == 0:  # Update progress every 10 frames
+                        progress = min(1.0, frame_count / total_frames)
+                        progress_bar.progress(progress)
+
+                    frame_count += 1
+
+            # Cleanup
+            vidcap.release()
+
+            # Verify we extracted some frames
+            if not frames:
+                raise ValueError("No valid frames extracted from video")
+
+            logger.info(f"Successfully extracted {len(frames)} frames from video")
             return frames
-        except Exception as e:
-            logger.error(f"Error extracting frames: {str(e)}")
-            st.error("Error processing video file. Please try again.")
+
+        except FileNotFoundError as e:
+            logger.error(f"File not found error: {str(e)}")
+            st.error("Video file not found. Please check the file and try again.")
             return []
+        except ValueError as e:
+            logger.error(f"Video processing error: {str(e)}")
+            st.error(f"Error processing video: {str(e)}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error in video processing: {str(e)}")
+            st.error("Unexpected error while processing video. Please try a different file or format.")
+            return []
+        finally:
+            # Ensure video capture is released
+            if 'vidcap' in locals():
+                vidcap.release()
 
     def process_image(self, image: np.ndarray) -> str:
         """Process image with enhanced OCR"""
@@ -202,13 +258,22 @@ class BusinessCardProcessor:
         
         for uploaded_file in uploaded_files:
             try:
+                # Validate file size
+                file_size = len(uploaded_file.getvalue()) / (1024 * 1024)  # Size in MB
+                if file_size > 100:  # 100MB limit
+                    st.warning(f"File {uploaded_file.name} is too large ({file_size:.1f}MB). Skipping...")
+                    continue
+
                 # Create progress bar for each file
                 progress_text = f"Processing {uploaded_file.name}..."
                 with st.spinner(progress_text):
-                    # Save temporary file
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
+                    # Create temp directory if it doesn't exist
+                    temp_dir = tempfile.mkdtemp()
+                    file_path = os.path.join(temp_dir, uploaded_file.name)
+                    
+                    # Save file with original name
+                    with open(file_path, 'wb') as tmp_file:
                         tmp_file.write(uploaded_file.getvalue())
-                        file_path = tmp_file.name
 
                     # Process based on file type
                     if any(uploaded_file.name.lower().endswith(ext) for ext in self.video_extensions):
