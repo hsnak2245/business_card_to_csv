@@ -26,82 +26,48 @@ st.set_page_config(
 # Enhanced CSS styling with modern design
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600&display=swap');
     
     /* Main container styling */
     .main {
-        background-color: #1E1E1E;
-        color: #E0E0E0;
+        background-color: #1a1a1a;
+        color: #ffffff;
         font-family: 'Montserrat', sans-serif;
-        padding: 2rem;
-    }
-    
-    /* Sidebar styling */
-    .css-1d391kg {
-        background-color: #2D2D2D;
     }
     
     /* Headers */
     h1 {
-        color: #FF0000 !important;
-        font-weight: 600;
-        margin-bottom: 2rem;
-    }
-    
-    h2, h3 {
-        color: #E0E0E0 !important;
+        color: #007bff !important;
         font-weight: 500;
+        margin-bottom: 1rem;
     }
     
     /* Buttons */
     .stButton>button {
-        background-color: #FF0000;
+        background-color: #007bff;
         color: white;
         border: none;
         border-radius: 4px;
-        padding: 0.5rem 1rem;
-        font-family: 'Montserrat', sans-serif;
         font-weight: 500;
-        transition: all 0.3s ease;
+        width: 100%;
     }
     
     .stButton>button:hover {
-        background-color: #CC0000;
-        transform: translateY(-2px);
+        background-color: #0056b3;
     }
     
     /* File uploader */
     .stFileUploader {
-        background-color: #2D2D2D;
-        border-radius: 4px;
-        padding: 1rem;
-    }
-    
-    /* Progress bar */
-    .stProgress > div > div > div > div {
-        background-color: #FF0000;
-    }
-    
-    /* Tables */
-    .dataframe {
-        background-color: #2D2D2D;
-        color: #E0E0E0;
+        background-color: #2d2d2d;
         border-radius: 4px;
     }
     
-    /* Multiselect */
-    .stMultiSelect {
-        background-color: #2D2D2D;
-        color: #E0E0E0;
-    }
-    
-    /* Error messages */
+    /* Info messages */
     .stAlert {
-        background-color: #FF000020;
-        color: #FF0000;
-        border: 1px solid #FF0000;
+        background-color: rgba(0, 123, 255, 0.1);
+        color: #007bff;
+        border: 1px solid #007bff;
         border-radius: 4px;
-        padding: 1rem;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -307,11 +273,8 @@ def main():
     processor = BusinessCardProcessor()
     
     # App header
-    st.title("📇 Business Card Processor")
-    st.markdown("""
-    Transform your business cards into structured digital data.
-    Upload images or videos of business cards to extract information.
-    """)
+    st.title("Business Card Processor")
+    st.markdown("Transform your business cards into structured digital data. Upload images or videos of business cards to extract information.")
     
     # Sidebar configuration
     with st.sidebar:
@@ -347,16 +310,17 @@ def main():
     
     if uploaded_files:
         # Add process button
-        if st.button("🔄 Process Business Cards", type="primary", use_container_width=True):
-            start_time = time.time()
-            
-            # Process files
-            with st.spinner("Processing business cards... Please wait."):
-                all_data = processor.process_files(uploaded_files)
-                st.session_state.processed_data = all_data
-        
         # Show number of files uploaded
         st.info(f"📁 {len(uploaded_files)} files uploaded and ready for processing")
+        
+        # Process button
+        if st.button("Process Business Cards"):
+            with st.spinner("Processing..."):
+                try:
+                    all_data = processor.process_files(uploaded_files)
+                    st.session_state.processed_data = all_data
+                except Exception as e:
+                    st.error("An error occurred during processing. Please try again.")
         
         # Display results
         if st.session_state.processed_data:
