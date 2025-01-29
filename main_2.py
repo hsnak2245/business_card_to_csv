@@ -1,12 +1,13 @@
 import streamlit as st
 import cv2
-import pytesseract
 import numpy as np
 import tempfile
 import os
 import requests
 import json
 from PIL import Image
+import sys
+import subprocess
 
 # Page configuration
 st.set_page_config(
@@ -15,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for blue theme
+# Custom CSS with improved error styling
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600&display=swap');
@@ -41,6 +42,8 @@ st.markdown("""
         width: 100%;
         margin-top: 1rem;
         margin-bottom: 1rem;
+        padding: 0.75rem 1.5rem;
+        font-size: 1.1rem;
     }
     
     .stButton>button:hover {
@@ -51,157 +54,252 @@ st.markdown("""
         background-color: #2d2d2d;
         border-radius: 4px;
         padding: 1rem;
+        border: 2px dashed #007bff;
     }
     
-    .stAlert {
+    .upload-text {
+        color: #007bff;
+        font-size: 1.2rem;
+        font-weight: 500;
+    }
+    
+    .error-box {
+        background-color: rgba(220, 53, 69, 0.1);
+        color: #dc3545;
+        border: 1px solid #dc3545;
+        border-radius: 4px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+    
+    .warning-box {
+        background-color: rgba(255, 193, 7, 0.1);
+        color: #ffc107;
+        border: 1px solid #ffc107;
+        border-radius: 4px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+    
+    .info-box {
         background-color: rgba(0, 123, 255, 0.1);
         color: #007bff;
         border: 1px solid #007bff;
         border-radius: 4px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+    
+    .file-list {
+        background-color: #2d2d2d;
+        border-radius: 4px;
         padding: 0.5rem;
+        margin: 0.5rem 0;
+    }
+    
+    .file-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.5rem;
+        border-bottom: 1px solid #404040;
+    }
+    
+    .success-box {
+        background-color: rgba(40, 167, 69, 0.1);
+        color: #28a745;
+        border: 1px solid #28a745;
+        border-radius: 4px;
+        padding: 1rem;
+        margin: 1rem 0;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# Constants
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-GROQ_API_URL = "https://api.groq.com/v1/chat/completions"
+def check_tesseract():
+    """Check if tesseract is installed and accessible"""
+    try:
+        subprocess.run(['tesseract', '--version'], capture_output=True)
+        return True
+    except FileNotFoundError:
+        installation_instructions = """
+        Tesseract is not installed or not in your PATH. Please install it:
+        
+        For Windows:
+        1. Download installer from: https://github.com/UB-Mannheim/tesseract/wiki
+        2. Add Tesseract to your PATH
+        
+        For Mac:
+        ```brew install tesseract```
+        
+        For Linux:
+        ```sudo apt-get install tesseract-ocr```
+        """
+        st.error(installation_instructions)
+        return False
 
 class BusinessCardProcessor:
-    @staticmethod
-    def enhance_image(frame):
+    def __init__(self):
+        """Initialize the Business Card Processor"""
+        self.GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+        self.GROQ_API_URL = "https://api.groq.com/v1/chat/completions"
+        
+    def enhance_image(self, image):
         """Enhance image for better OCR results"""
-        # Convert to grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        # Apply Gaussian blur
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        # Apply adaptive thresholding
-        thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                     cv2.THRESH_BINARY, 11, 2)
-        return thresh
-
-    @staticmethod
-    def extract_text_from_frame(frame):
-        """Extract text from a single frame"""
         try:
+            # Convert to grayscale
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            # Denoise
+            denoised = cv2.fastNlMeansDenoising(gray)
+            # Adaptive threshold
+            thresh = cv2.adaptiveThreshold(
+                denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                cv2.THRESH_BINARY, 11, 2
+            )
+            return thresh
+        except Exception as e:
+            st.error(f"Error enhancing image: {str(e)}")
+            return image
+
+    def process_image(self, image_path):
+        """Process single image"""
+        try:
+            # Read image
+            image = cv2.imread(image_path)
+            if image is None:
+                st.error("Failed to load image")
+                return None
+            
             # Enhance image
-            processed_frame = BusinessCardProcessor.enhance_image(frame)
-            # Extract text using pytesseract
-            text = pytesseract.image_to_string(processed_frame)
+            enhanced = self.enhance_image(image)
+            
+            # Save enhanced image temporarily
+            temp_enhanced = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+            cv2.imwrite(temp_enhanced.name, enhanced)
+            
+            # Use tesseract
+            import pytesseract
+            text = pytesseract.image_to_string(temp_enhanced.name)
+            
+            # Cleanup
+            os.unlink(temp_enhanced.name)
+            
             return text.strip()
         except Exception as e:
-            st.error(f"Error processing frame: {str(e)}")
-            return ""
+            st.error(f"Error processing image: {str(e)}")
+            return None
 
-    @staticmethod
-    def process_video(video_path):
-        """Process video file and extract text from frames"""
+    def process_video(self, video_path):
+        """Process video file"""
         try:
             cap = cv2.VideoCapture(video_path)
             if not cap.isOpened():
-                st.error("Error: Could not open video file.")
-                return ""
+                st.error("Could not open video file")
+                return None
 
-            text_output = ""
-            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            step_size = max(1, frame_count // 10)  # Extract text from 10 keyframes
+            frames_text = []
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            step = max(1, total_frames // 10)  # Process 10 frames
 
-            with st.progress(0) as progress_bar:
-                for i in range(0, frame_count, step_size):
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, i)
-                    ret, frame = cap.read()
-                    if ret:
-                        text_output += BusinessCardProcessor.extract_text_from_frame(frame) + "\n"
-                    progress_bar.progress(min(1.0, (i + 1) / frame_count))
+            progress_bar = st.progress(0)
+            for frame_idx in range(0, total_frames, step):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                ret, frame = cap.read()
+                if ret:
+                    # Save frame temporarily
+                    temp_frame = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                    cv2.imwrite(temp_frame.name, frame)
+                    
+                    # Process frame
+                    text = self.process_image(temp_frame.name)
+                    if text:
+                        frames_text.append(text)
+                    
+                    # Cleanup
+                    os.unlink(temp_frame.name)
+                    
+                    # Update progress
+                    progress = min(1.0, frame_idx / total_frames)
+                    progress_bar.progress(progress)
 
             cap.release()
-            return text_output.strip()
+            return "\n".join(frames_text)
         except Exception as e:
             st.error(f"Error processing video: {str(e)}")
-            return ""
-
-    @staticmethod
-    def analyze_text_with_groq(text):
-        """Analyze extracted text using Groq API"""
-        headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        prompt = f"""Extract business card information from the following text:
-        {text}
-        
-        Format the response as structured data with:
-        - Name
-        - Company
-        - Position
-        - Phone
-        - Email
-        - Website
-        - Address
-        """
-        
-        payload = {
-            "model": "mixtral-8x7b-32768",
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1
-        }
-
-        try:
-            response = requests.post(GROQ_API_URL, headers=headers, json=payload)
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
-        except requests.exceptions.RequestException as e:
-            st.error(f"API Error: {e}")
-            return "API request failed."
+            return None
 
 def main():
-    st.title("Business Card Processor")
-    st.markdown("Transform your business cards into structured digital data. Upload images or videos to extract information.")
+    # Check for tesseract installation
+    if not check_tesseract():
+        return
 
-    # File uploader
+    st.title("Business Card Processor")
+    st.markdown("Transform your business cards into structured digital data")
+
+    processor = BusinessCardProcessor()
+
+    # File uploader with clear instructions
+    st.markdown("""
+    <div class="upload-text">
+        📤 Upload business card images or videos
+        <br>
+        <small>Supported formats: JPG, PNG, MP4, AVI</small>
+    </div>
+    """, unsafe_allow_html=True)
+    
     uploaded_files = st.file_uploader(
-        "Upload Business Cards",
-        type=["mp4", "avi", "mov", "jpg", "jpeg", "png"],
+        "",  # Empty label since we have custom text above
+        type=['jpg', 'jpeg', 'png', 'mp4', 'avi'],
         accept_multiple_files=True
     )
 
     if uploaded_files:
-        st.info(f"📁 {len(uploaded_files)} files uploaded and ready for processing")
+        # Display uploaded files
+        st.markdown(f"""
+        <div class="info-box">
+            📁 {len(uploaded_files)} files ready for processing
+        </div>
+        """, unsafe_allow_html=True)
 
+        # Process button
         if st.button("Process Business Cards"):
-            with st.spinner("Processing files..."):
-                for uploaded_file in uploaded_files:
-                    # Create temporary file
+            for uploaded_file in uploaded_files:
+                try:
+                    # Create temp file
                     with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as temp_file:
                         temp_file.write(uploaded_file.getvalue())
                         file_path = temp_file.name
 
-                    try:
-                        # Process based on file type
-                        if uploaded_file.type.startswith('video'):
-                            extracted_text = BusinessCardProcessor.process_video(file_path)
-                        else:  # Image file
-                            image = cv2.imread(file_path)
-                            extracted_text = BusinessCardProcessor.extract_text_from_frame(image)
+                    # Process based on file type
+                    if uploaded_file.type.startswith('video'):
+                        text = processor.process_video(file_path)
+                    else:
+                        text = processor.process_image(file_path)
 
-                        if extracted_text:
-                            # Analyze with Groq
-                            analysis_result = BusinessCardProcessor.analyze_text_with_groq(extracted_text)
-                            
-                            # Display results in expandable section
-                            with st.expander(f"Results for {uploaded_file.name}"):
-                                st.text_area("Extracted Text", extracted_text, height=100)
-                                st.text_area("Structured Information", analysis_result, height=200)
-                        else:
-                            st.warning(f"No text could be extracted from {uploaded_file.name}")
+                    # Display results
+                    if text:
+                        st.markdown(f"""
+                        <div class="success-box">
+                            ✅ Successfully processed: {uploaded_file.name}
+                        </div>
+                        """, unsafe_allow_html=True)
+                        st.text_area(f"Extracted text from {uploaded_file.name}", text, height=150)
+                    else:
+                        st.markdown(f"""
+                        <div class="warning-box">
+                            ⚠️ No text could be extracted from {uploaded_file.name}
+                        </div>
+                        """, unsafe_allow_html=True)
 
-                    except Exception as e:
-                        st.error(f"Error processing {uploaded_file.name}: {str(e)}")
-                    finally:
-                        # Cleanup
-                        if os.path.exists(file_path):
-                            os.remove(file_path)
+                    # Cleanup
+                    os.unlink(file_path)
+
+                except Exception as e:
+                    st.markdown(f"""
+                    <div class="error-box">
+                        ❌ Error processing {uploaded_file.name}: {str(e)}
+                    </div>
+                    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
