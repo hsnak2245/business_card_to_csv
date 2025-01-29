@@ -341,16 +341,27 @@ def main():
         accept_multiple_files=True
     )
 
+    # Initialize session state for processed data if it doesn't exist
+    if 'processed_data' not in st.session_state:
+        st.session_state.processed_data = None
+    
     if uploaded_files:
-        start_time = time.time()
+        # Add process button
+        if st.button("🔄 Process Business Cards", type="primary", use_container_width=True):
+            start_time = time.time()
+            
+            # Process files
+            with st.spinner("Processing business cards... Please wait."):
+                all_data = processor.process_files(uploaded_files)
+                st.session_state.processed_data = all_data
         
-        # Process files
-        all_data = processor.process_files(uploaded_files)
+        # Show number of files uploaded
+        st.info(f"📁 {len(uploaded_files)} files uploaded and ready for processing")
         
         # Display results
-        if all_data:
+        if st.session_state.processed_data:
             # Create filtered data
-            reader = csv.DictReader(all_data, fieldnames=processor.available_columns)
+            reader = csv.DictReader(st.session_state.processed_data, fieldnames=processor.available_columns)
             filtered_data = [{col: row[col] for col in selected_columns} for row in reader]
             
             # Display processing summary
