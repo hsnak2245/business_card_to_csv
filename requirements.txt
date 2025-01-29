@@ -1,6 +1,6 @@
 streamlit
 opencv-python
-cv2
+opencv
 pytesseract
 Pillow
 groq
